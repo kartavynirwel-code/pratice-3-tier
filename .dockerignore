@@ -1,0 +1,16 @@
+# Use this only if you build with the repo root as context.
+# Per-service builds should use backend/.dockerignore and frontend/.dockerignore.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/node_modules/
+**/dist/
+**/target/
+docs/
+db/
+*.md
+.idea/
+.vscode/
+.DS_Store
