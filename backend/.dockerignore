@@ -1,0 +1,21 @@
+# Build output
+target/
+*.class
+*.jar
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# VCS / IDE / OS
+.git
+.gitignore
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Logs / docs
+*.log
+*.md

@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# VCS / IDE / OS
+.git
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# Docs
+*.md
