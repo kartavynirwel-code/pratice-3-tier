@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'IMAGE_VERSION',
+               defaultValue: '',
+               description: 'Image tag (e.g. v4). Leave empty to use the git commit SHA.')
+        choice(name: 'BUILD_TARGET',
+               choices: ['backend', 'frontend', 'both'],
+               description: 'Which image(s) to build, push and update in the GitOps repo')
+    }
+
+    environment {
+        DOCKERHUB_USER = 'kartavyanirwel'
+        // Confirm the URL of your GitOps (manifests) repo
+        GITOPS_REPO    = 'https://github.com/kartavynirwel-code/gitops-pratice-3-tier.git'
+        MANIFEST_FILE  = 'Deployment.yaml'
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Set version') {
+            steps {
+                script {
+                    def v = params.IMAGE_VERSION?.trim()
+                    if (!v) {
+                        v = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    }
+                    // Docker tag rules + protection against shell injection
+                    if (!(v ==~ /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/)) {
+                        error "Invalid image version: '${v}'. Only letters, digits, _ . - are allowed."
+                    }
+                    env.VERSION = v
+                    env.IMAGES  = (params.BUILD_TARGET == 'both')
+                                    ? 'task-backend task-frontend'
+                                    : "task-${params.BUILD_TARGET}"
+                }
+                echo "Version: ${env.VERSION} | Images: ${env.IMAGES}"
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    for img in $IMAGES; do
+                        docker build -t $DOCKERHUB_USER/$img:$VERSION ./${img#task-}
+                    done
+                '''
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials',
+                                                  usernameVariable: 'DH_USER',
+                                                  passwordVariable: 'DH_TOKEN')]) {
+                    sh 'echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin'
+                    // Never overwrite an existing tag
+                    sh '''
+                        for img in $IMAGES; do
+                            if docker manifest inspect $DOCKERHUB_USER/$img:$VERSION >/dev/null 2>&1; then
+                                echo "Tag $VERSION already exists for $img"
+                                exit 1
+                            fi
+                        done
+                    '''
+                    sh '''
+                        for img in $IMAGES; do
+                            docker push $DOCKERHUB_USER/$img:$VERSION
+                        done
+                    '''
+                }
+            }
+            post {
+                always { sh 'docker logout || true' }
+            }
+        }
+
+        stage('Update GitOps repo') {
+            steps {
+                dir('gitops') {
+                    git url: env.GITOPS_REPO, branch: 'main', credentialsId: 'github-credentials'
+                    withCredentials([gitUsernamePassword(credentialsId: 'github-credentials')]) {
+                        sh '''
+                            git config user.name "jenkins-ci"
+                            git config user.email "jenkins-ci@users.noreply.github.com"
+                            for img in $IMAGES; do
+                                sed -i "s|image: $DOCKERHUB_USER/$img:.*|image: $DOCKERHUB_USER/$img:$VERSION|" $MANIFEST_FILE
+                            done
+                            git add $MANIFEST_FILE
+                            git diff --cached --quiet || git commit -m "ci: deploy $VERSION ($BUILD_TARGET)"
+                            git pull --rebase origin main
+                            git push origin HEAD:main
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo 'Pipeline completed successfully!' }
+        failure { echo 'Pipeline failed!' }
+        always  { cleanWs() }
+    }
+}
